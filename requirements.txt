@@ -1,0 +1,10 @@
+Flask
+langdetect
+langchain_groq
+langchain
+langchain_google_genai
+python-dotenv
+google-api-python-client
+youtube-transcript-api
+python-multipart
+Gunicorn
