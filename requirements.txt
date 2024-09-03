@@ -8,3 +8,13 @@ google-api-python-client
 youtube-transcript-api
 python-multipart
 Gunicorn
+faiss-cpu
+langchain_community
+PyPDF2
+pypdf
+cryptography >= 3.1
+cffi==1.16.0
+pycparser==2.22
+pydantic
+langdetect  
+google-cloud-aiplatform>=1.38
