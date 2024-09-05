@@ -1,3 +1,4 @@
+import random
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from langdetect import detect
@@ -49,6 +50,9 @@ Please provide the most accurate response of at least 100 words based on the que
 Questions: {input}
 """)
 
+
+
+#  Vector Embedding of the document
 def vector_embedding(uploaded_pdf=None, document_text=None):
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
 
@@ -68,6 +72,9 @@ def vector_embedding(uploaded_pdf=None, document_text=None):
     doc_lang = detect(final_documents[0].page_content)
     return vectors, final_documents, doc_lang
 
+
+
+# QA Route set
 @app.route("/document_qa/", methods=["POST", "GET"])
 def document_qa():
     if request.method == "POST":
@@ -124,6 +131,95 @@ def document_qa():
             "answer": response['answer']
         })
 
+
+
+
+# Quiz generator 
+@app.route('/generate_quiz', methods=['POST'])
+def generate_quiz():
+    if 'file' not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+    
+    uploaded_file = request.files['file']
+    num_questions = request.form.get('num', 0)
+    
+    if not num_questions.isdigit() or int(num_questions) <= 0:
+        return jsonify({"error": "Please enter a valid number of questions"}), 400
+    
+    num_questions = int(num_questions)
+    
+    try:
+        vectors, final_documents, doc_lang = vector_embedding(uploaded_pdf=uploaded_file)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
+    prompt = ChatPromptTemplate.from_template("""
+    Create a quiz containing {num} questions related to the provided context.
+    Questions must be in multiple choice questions format.
+    <context>
+    {context}
+    <context>""")
+    llm = ChatGroq(groq_api_key=groq_api_key, model_name="Llama3-8b-8192")
+    retriever = vectors.as_retriever()
+    quiz_chain = create_stuff_documents_chain(llm, prompt)
+    quiz_retrieval_chain = create_retrieval_chain(retriever, quiz_chain)
+    quiz_response = quiz_retrieval_chain.invoke({'input': "Generate Quiz", 'num': num_questions})
+    quiz_text = quiz_response['answer']
+    
+    # Process quiz to structured format
+    quiz = []
+    questions = quiz_text.split("\n\n")  # Assuming each question is separated by double new lines
+
+    for question in questions:
+        if '?' in question:
+            q_text = question.split('?')[0] + '?'
+            options = question.split('\n')[1:]
+            correct_answer_index = random.randint(0, len(options) - 1)
+            correct_answer = options[correct_answer_index]  # Randomly choose one of the options as the correct answer
+
+            quiz.append({
+                "question": q_text,
+                "options": options,  # Keep options in the original order
+                "answer": correct_answer  # Use the randomly selected option as the correct answer
+            })
+            
+    return jsonify({"quiz": quiz})
+
+
+
+# Submit the quiz
+@app.route('/submit_quiz', methods=['POST'])
+def submit_quiz():
+    data = request.get_json()
+    quiz = data.get('quiz', [])
+    user_answers = data.get('answers', {})
+
+    if not quiz or not user_answers:
+        return jsonify({"error": "Invalid quiz or answers provided"}), 400
+    
+    correct_answers = 0
+    results = []
+    
+    for i, q_data in enumerate(quiz):
+        question = q_data['question']
+        options = q_data['options']
+        correct_option = q_data['answer']
+        selected_option = user_answers.get(str(i), None)
+        
+        if selected_option == correct_option:
+            result = {"question": question, "result": "correct", "correct_answer": correct_option}
+            correct_answers += 1
+        else:
+            result = {"question": question, "result": "incorrect", "correct_answer": correct_option}
+        results.append(result)
+    
+    score = f"{correct_answers}/{len(quiz)}"
+    return jsonify({"score": score, "results": results})
+
+
+
+
+# Study Planner
 @app.route("/generate_study_plan/", methods=["POST", "GET"])
 def generate_study_plan():
     if request.method == "POST":
@@ -199,6 +295,11 @@ def generate_study_plan():
             "study_plan": study_plan_response['answer']
         })
 
+
+
+
+
+# Gemini api call answer
 @app.route("/gemini_llm_chat/", methods=["POST", "GET"])
 def gemini_llm_chat():
     if request.method == "POST":
@@ -229,6 +330,9 @@ def gemini_llm_chat():
 
         return jsonify({"chat_history": chat_history})
 
+
+
+# Youtube Summarizer
 @app.route("/youtube_summarizer/", methods=["POST", "GET"])
 def youtube_summarizer():
     from youtube_transcript_api import YouTubeTranscriptApi
