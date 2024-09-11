@@ -318,15 +318,9 @@ prompt_template = ChatPromptTemplate.from_template("""
     <context>
 """)
 
-def generate_mind_map_from_text(context):
-    """Generate a custom mind map from markdown content provided by LLM."""
-    dot = graphviz.Digraph(format='png')
-    dot.attr(rankdir='LR')  # Set left-to-right layout
-
-    # Colors for different levels
-    main_topic_color = "#ADD8E6"  # Light blue
-    sub_topic_color = "#90EE90"   # Light green
-    detail_color = "#FFFFE0"      # Light yellow
+def generate_mermaid_from_text(context):
+    """Generate a Mermaid-based mind map from markdown content provided by LLM."""
+    mermaid_code = "```mermaid\nmindmap\n"
 
     current_topic = None
     current_subtopic = None
@@ -342,28 +336,23 @@ def generate_mind_map_from_text(context):
         # Detect main topics (Markdown header level 1 - "**")
         if line.startswith("**"):
             current_topic = line.replace("**", "").strip()
-            dot.node(current_topic, current_topic, shape="box", style="filled", fillcolor=main_topic_color, color="blue")
+            mermaid_code += f"  {current_topic}\n"
         
         # Detect subtopics (Markdown header level 2 - "###")
-        elif (line.startswith("###") or line.startswith("**")) and current_topic:
+        elif line.startswith("###") and current_topic:
             current_subtopic = line.replace("###", "").strip()
-            dot.node(current_subtopic, current_subtopic, shape="ellipse", style="filled", fillcolor=sub_topic_color)
-            dot.edge(current_topic, current_subtopic, color="blue")
+            mermaid_code += f"    {current_subtopic}\n"
         
         # Detect details (Markdown header level 3 or description text)
         elif line.startswith("* **") and current_subtopic:
             detail = line.replace("* **", "").strip()
-            dot.node(detail, detail, shape="ellipse", style="filled", fillcolor=detail_color)
-            dot.edge(current_subtopic, detail)
+            mermaid_code += f"      {detail}\n"
         elif current_subtopic:
             # Treat non-header lines as details
-            dot.node(line, line, shape="ellipse", style="filled", fillcolor=detail_color)
-            dot.edge(current_subtopic, line)
+            mermaid_code += f"      {line}\n"
 
-    # Return the Graphviz image as a binary stream
-    img_stream = io.BytesIO(dot.pipe(format='png'))
-    img_stream.seek(0)
-    return img_stream
+    mermaid_code += "```\n"
+    return mermaid_code
 
 @app.route('/process_pdf', methods=['POST'])
 def process_pdf():
@@ -395,16 +384,17 @@ def process_pdf():
             # Check if the response is valid before generating the mind map
             if response and 'answer' in response and response['answer'].strip():
                 # Generate mind map based on the LLM response context
-                mind_map_image_stream = generate_mind_map_from_text(response['answer'])
+                mermaid_mind_map = generate_mermaid_from_text(response['answer'])
                 
-                # Return the PNG image
-                return send_file(mind_map_image_stream, mimetype='image/png', as_attachment=True, download_name='mind_map.png')
+                # Return the Mermaid code as a response (you can serve this to a frontend that renders Mermaid)
+                return jsonify({"mermaid_code": mermaid_mind_map})
             else:
                 return "The response from the LLM is empty or invalid. Please try again."
         else:
             return "Vector embeddings are not set up. Please upload a PDF file."
     else:
         return "No file or text input provided."
+
 
 
 
