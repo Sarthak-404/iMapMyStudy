@@ -1,5 +1,5 @@
 import random
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from langdetect import detect
 from langchain_groq import ChatGroq
@@ -12,6 +12,8 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 import os
 import time
+import graphviz
+import io
 import shutil
 from dotenv import load_dotenv
 import google.generativeai as genai
@@ -294,6 +296,115 @@ def generate_study_plan():
         return jsonify({
             "study_plan": study_plan_response['answer']
         })
+
+
+
+
+# Mind Map Generator 
+# In-memory storage (acts as a temporary replacement for session)
+in_memory_data = {
+    'vectors': None,
+    'docs': None,
+    'doc_lang': None
+}
+# Define the prompt template
+prompt_template = ChatPromptTemplate.from_template("""
+    You are an expert teacher tasked with generating a well-structured mind map for students to understand the given material.
+    Your response should only contain a hierarchical mind map format containing Main Topic Subtopic and description in markdown language use "**" "###" and "* **" only.
+    Ensure the text is easy to parse and does not include additional comments or unrelated information.
+    
+    <context>
+    {context}
+    <context>
+""")
+
+def generate_mind_map_from_text(context):
+    """Generate a custom mind map from markdown content provided by LLM."""
+    dot = graphviz.Digraph(format='png')
+    dot.attr(rankdir='LR')  # Set left-to-right layout
+
+    # Colors for different levels
+    main_topic_color = "#ADD8E6"  # Light blue
+    sub_topic_color = "#90EE90"   # Light green
+    detail_color = "#FFFFE0"      # Light yellow
+
+    current_topic = None
+    current_subtopic = None
+
+    # Parse markdown content
+    lines = context.split('\n')
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        
+        # Detect main topics (Markdown header level 1 - "**")
+        if line.startswith("**"):
+            current_topic = line.replace("**", "").strip()
+            dot.node(current_topic, current_topic, shape="box", style="filled", fillcolor=main_topic_color, color="blue")
+        
+        # Detect subtopics (Markdown header level 2 - "###")
+        elif (line.startswith("###") or line.startswith("**")) and current_topic:
+            current_subtopic = line.replace("###", "").strip()
+            dot.node(current_subtopic, current_subtopic, shape="ellipse", style="filled", fillcolor=sub_topic_color)
+            dot.edge(current_topic, current_subtopic, color="blue")
+        
+        # Detect details (Markdown header level 3 or description text)
+        elif line.startswith("* **") and current_subtopic:
+            detail = line.replace("* **", "").strip()
+            dot.node(detail, detail, shape="ellipse", style="filled", fillcolor=detail_color)
+            dot.edge(current_subtopic, detail)
+        elif current_subtopic:
+            # Treat non-header lines as details
+            dot.node(line, line, shape="ellipse", style="filled", fillcolor=detail_color)
+            dot.edge(current_subtopic, line)
+
+    # Return the Graphviz image as a binary stream
+    img_stream = io.BytesIO(dot.pipe(format='png'))
+    img_stream.seek(0)
+    return img_stream
+
+@app.route('/process_pdf', methods=['POST'])
+def process_pdf():
+    uploaded_file = request.files.get('file')
+    document_text = request.form.get('document_text')
+    llm = ChatGroq(groq_api_key=groq_api_key, model_name="Llama3-8b-8192")
+    # Check if a file was uploaded or text was provided
+    if uploaded_file or document_text:
+        # Use your custom vector_embedding function
+        vectors, docs, doc_lang = vector_embedding(uploaded_pdf=uploaded_file, document_text=document_text)
+
+        # Store the results in memory
+        in_memory_data['vectors'] = vectors
+        in_memory_data['docs'] = docs
+        in_memory_data['doc_lang'] = doc_lang
+
+        # Step 2: Generate Mind Map if embeddings were created successfully
+        if in_memory_data['vectors']:
+            # Set up the document chain and retriever
+            document_chain = create_stuff_documents_chain(llm, prompt_template)
+            retriever = in_memory_data['vectors'].as_retriever()
+            retrieval_chain = create_retrieval_chain(retriever, document_chain)
+            
+            # Measure response time
+            start = time.process_time()
+            response = retrieval_chain.invoke({'input': "generate mind map"})  # Request the LLM to generate a mind map
+            response_time = time.process_time() - start
+            
+            # Check if the response is valid before generating the mind map
+            if response and 'answer' in response and response['answer'].strip():
+                # Generate mind map based on the LLM response context
+                mind_map_image_stream = generate_mind_map_from_text(response['answer'])
+                
+                # Return the PNG image
+                return send_file(mind_map_image_stream, mimetype='image/png', as_attachment=True, download_name='mind_map.png')
+            else:
+                return "The response from the LLM is empty or invalid. Please try again."
+        else:
+            return "Vector embeddings are not set up. Please upload a PDF file."
+    else:
+        return "No file or text input provided."
 
 
 
