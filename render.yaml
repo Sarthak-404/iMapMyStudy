@@ -1,7 +1,0 @@
-services:
-  - type: web
-    name: flask-api
-    env: python
-    plan: free  # or starter/pro depending on your plan
-    buildCommand: "./render-build.sh"
-    startCommand: "gunicorn --bind 0.0.0.0:8000 app:app"
