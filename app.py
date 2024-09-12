@@ -334,7 +334,7 @@ def generate_mermaid_from_text(context):
             continue
         
         # Detect main topics (Markdown header level 1 - "**")
-        if line.startswith("**"):
+        if line.startswith("**") and line.endswith("**"):
             current_topic = line.replace("**", "").strip()
             mermaid_code += f"  {current_topic}\n"
         
@@ -343,12 +343,12 @@ def generate_mermaid_from_text(context):
             current_subtopic = line.replace("###", "").strip()
             mermaid_code += f"    {current_subtopic}\n"
         
-        # Detect details (Markdown header level 3 or description text)
+        # Detect details (Markdown list or other text following subtopics)
         elif line.startswith("* **") and current_subtopic:
             detail = line.replace("* **", "").strip()
             mermaid_code += f"      {detail}\n"
         elif current_subtopic:
-            # Treat non-header lines as details
+            # Treat non-header lines as details (catch any extra details)
             mermaid_code += f"      {line}\n"
 
     mermaid_code += "```\n"
