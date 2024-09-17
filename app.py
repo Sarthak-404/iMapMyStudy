@@ -12,7 +12,6 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 import os
 import time
-import graphviz
 import io
 import shutil
 from dotenv import load_dotenv
@@ -46,6 +45,7 @@ prompt_hindi = ChatPromptTemplate.from_template("""
 prompt_english = ChatPromptTemplate.from_template("""
 Answer the questions based on the provided context only.
 Please provide the most accurate response of at least 100 words based on the question.
+Answer the question in a way that a teacher should address.
 <context>
 {context}
 <context>
@@ -312,7 +312,7 @@ prompt_template = ChatPromptTemplate.from_template("""
     You are an expert teacher tasked with generating a well-structured mind map for students to understand the given material.
     Your response should only contain a hierarchical mind map format containing Main Topic Subtopic and description in markdown language use "**" "###" and "* **" only.
     Ensure the text is easy to parse and does not include additional comments or unrelated information.
-    
+    Don't include exercises or questions in the mind map.
     <context>
     {context}
     <context>
