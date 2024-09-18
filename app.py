@@ -68,7 +68,7 @@ def vector_embedding(uploaded_pdf=None, document_text=None):
     else:
         docs = [{"page_content": document_text}]
     
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     final_documents = text_splitter.split_documents(docs)
     vectors = FAISS.from_documents(final_documents, embeddings)
     doc_lang = detect(final_documents[0].page_content)
