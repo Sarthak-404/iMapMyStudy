@@ -17,6 +17,7 @@ import shutil
 from dotenv import load_dotenv
 import google.generativeai as genai
 import uuid
+import logging
 load_dotenv()
 
 app = Flask(__name__)
@@ -146,9 +147,9 @@ def generate_quiz():
         return jsonify({"error": "No file uploaded"}), 400
     
     uploaded_file = request.files['file']
-    num_questions = request.form.get('num', 0)
     
-    if not num_questions.isdigit() or int(num_questions) <= 0:
+    num_questions = request.form.get('num', None)
+    if num_questions is None or not num_questions.isdigit() or int(num_questions) <= 0:
         return jsonify({"error": "Please enter a valid number of questions"}), 400
     
     num_questions = int(num_questions)
@@ -158,18 +159,26 @@ def generate_quiz():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     
+    # Modify the prompt to be more explicit about correct answer
     prompt = ChatPromptTemplate.from_template("""
-    Create a quiz containing {num} questions related to the provided context.
-    Questions must be in multiple choice questions format.
+    Create a quiz with {num} multiple-choice questions based on the provided context.
+    Each question should have exactly 4 options. The correct answer must be marked clearly with "(Correct Answer)" next to it.
+    Ensure that there is always one correct answer and that it is marked.
+    
     <context>
     {context}
-    <context>""")
+    <context>
+    """)
+
     llm = ChatGroq(groq_api_key=groq_api_key, model_name="Llama3-8b-8192")
     retriever = vectors.as_retriever()
     quiz_chain = create_stuff_documents_chain(llm, prompt)
     quiz_retrieval_chain = create_retrieval_chain(retriever, quiz_chain)
     quiz_response = quiz_retrieval_chain.invoke({'input': "Generate Quiz", 'num': num_questions})
     quiz_text = quiz_response['answer']
+    
+    # Log the raw response to check what the LLM is generating
+    logging.info("LLM Raw Quiz Response: %s", quiz_text)
     
     # Process quiz to structured format
     quiz = []
@@ -179,15 +188,23 @@ def generate_quiz():
         if '?' in question:
             q_text = question.split('?')[0] + '?'
             options = question.split('\n')[1:]
-            correct_answer_index = random.randint(0, len(options) - 1)
-            correct_answer = options[correct_answer_index]  # Randomly choose one of the options as the correct answer
-
-            quiz.append({
-                "question": q_text,
-                "options": options,  # Keep options in the original order
-                "answer": correct_answer  # Use the randomly selected option as the correct answer
-            })
+            correct_answer = None
             
+            processed_options = []
+            for option in options:
+                if "(Correct Answer)" in option:
+                    correct_answer = option.replace("(Correct Answer)", "").strip()
+                processed_options.append(option.replace("(Correct Answer)", "").strip())
+            
+            if correct_answer:
+                quiz.append({
+                    "question": q_text,
+                    "options": processed_options,  # Keep options in the original order
+                    "answer": correct_answer  # Use the correct answer marked by the LLM
+                })
+            else:
+                return jsonify({"error": "Quiz generation failed to mark correct answer.", "llm_response": quiz_text}), 500
+    
     return jsonify({"quiz": quiz})
 
 
