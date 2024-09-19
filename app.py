@@ -161,13 +161,29 @@ def generate_quiz():
     
     # Modify the prompt to be more explicit about correct answer
     prompt = ChatPromptTemplate.from_template("""
-    Create a quiz with {num} multiple-choice questions based on the provided context.
-    Each question should have exactly 4 options. The correct answer must be marked clearly with "(Correct Answer)" next to it.
-    Ensure that there is always one correct answer and that it is marked.
+        Generate a multiple-choice quiz based on the following context. Follow these guidelines:
     
-    <context>
-    {context}
-    <context>
+        1. Create exactly {num} questions.
+        2. Each question should have 4 options (A, B, C, D).
+        3. Clearly mark the correct answer with "(Correct)" at the end of the option.
+        4. Ensure only one answer is marked as correct for each question.
+        5. Make the questions challenging but fair, testing key concepts from the context.
+        6. Vary the position of the correct answer across questions.
+        
+        Format each question as follows:
+        
+        Q1. [Question text]
+        A. [Option A]
+        B. [Option B]
+        C. [Option C] (Correct)
+        D. [Option D]
+        
+        Context:
+        <context>
+        {context}
+        </context>
+        
+        Begin the quiz:
     """)
 
     llm = ChatGroq(groq_api_key=groq_api_key, model_name="Llama3-8b-8192")
@@ -182,28 +198,38 @@ def generate_quiz():
     
     # Process quiz to structured format
     quiz = []
-    questions = quiz_text.split("\n\n")  # Assuming each question is separated by double new lines
+    
+    # Split questions based on the format "Q[question number]."
+    questions = quiz_text.split('\nQ')  # 'Q' starts each question
+    if not questions[0].startswith('Q'):
+        questions[0] = 'Q' + questions[0]  # Re-add the 'Q' if the first question is missing it
 
     for question in questions:
-        if '?' in question:
-            q_text = question.split('?')[0] + '?'
-            options = question.split('\n')[1:]
-            correct_answer = None
-            
-            processed_options = []
-            for option in options:
-                if "(Correct Answer)" in option:
-                    correct_answer = option.replace("(Correct Answer)", "").strip()
-                processed_options.append(option.replace("(Correct Answer)", "").strip())
-            
-            if correct_answer:
-                quiz.append({
-                    "question": q_text,
-                    "options": processed_options,  # Keep options in the original order
-                    "answer": correct_answer  # Use the correct answer marked by the LLM
-                })
-            else:
-                return jsonify({"error": "Quiz generation failed to mark correct answer.", "llm_response": quiz_text}), 500
+        lines = question.split('\n')
+        q_text = lines[0].strip()
+        options = lines[1:]  # Remaining lines are options
+        
+        correct_answer = None
+        processed_options = []
+
+        # Process each option
+        for option in options:
+            # Check if "(Correct)" is in the option and clean the text
+            if "(Correct)" in option:
+                correct_answer = option.replace("(Correct)", "").strip()
+            processed_options.append(option.replace("(Correct)", "").strip())
+
+        # Ensure the correct answer was identified
+        if correct_answer:
+            quiz.append({
+                "question": q_text,
+                "options": processed_options,  # Keep options in the original order
+                "answer": correct_answer  # Use the correct answer marked by the LLM
+            })
+        else:
+            # Log the issue for debugging
+            logging.error("Failed to mark correct answer for question: %s", q_text)
+            return jsonify({"error": "Quiz generation failed to mark correct answer.", "llm_response": quiz_text}), 500
     
     return jsonify({"quiz": quiz})
 
