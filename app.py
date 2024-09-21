@@ -21,7 +21,7 @@ import logging
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*"}}, methods=["GET", "POST", "OPTIONS"], allow_headers=["Content-Type", "Authorization"])
 
 app.secret_key = os.getenv('FLASK_SECRET_KEY')
 groq_api_key = os.getenv('GROQ_API_KEY')
@@ -82,8 +82,12 @@ def vector_embedding(uploaded_pdf=None, document_text=None):
 
 
 # Document QA
-@app.route("/document_qa/", methods=["POST", "GET"])
+@app.route("/document_qa/", methods=["POST", "GET", "OPTIONS"])
 def document_qa():
+    if request.method == "OPTIONS":
+        # Handle the preflight CORS request
+        return jsonify({'status': 'OK'}), 200
+        
     if request.method == "POST":
         if 'uploaded_file' in request.files:
             uploaded_file = request.files['uploaded_file']
