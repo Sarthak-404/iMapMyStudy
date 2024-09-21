@@ -147,9 +147,9 @@ def generate_quiz():
         return jsonify({"error": "No file uploaded"}), 400
     
     uploaded_file = request.files['file']
+    num_questions = request.form.get('num', 0)
     
-    num_questions = request.form.get('num', None)
-    if num_questions is None or not num_questions.isdigit() or int(num_questions) <= 0:
+    if not num_questions.isdigit() or int(num_questions) <= 0:
         return jsonify({"error": "Please enter a valid number of questions"}), 400
     
     num_questions = int(num_questions)
@@ -159,33 +159,12 @@ def generate_quiz():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     
-    # Modify the prompt to be more explicit about correct answer
     prompt = ChatPromptTemplate.from_template("""
-        Generate a multiple-choice quiz based on the following context. Follow these guidelines:
-    
-        1. Create exactly {num} questions.
-        2. Each question should have 4 options (A, B, C, D).
-        3. Clearly mark the correct answer with "(Correct)" at the end of the option.
-        4. Ensure only one answer is marked as correct for each question.
-        5. Make the questions challenging but fair, testing key concepts from the context.
-        6. Vary the position of the correct answer across questions.
-        
-        Format each question as follows:
-        
-        Q1. [Question text]
-        A. [Option A]
-        B. [Option B]
-        C. [Option C] (Correct)
-        D. [Option D]
-        
-        Context:
-        <context>
-        {context}
-        </context>
-        
-        Begin the quiz:
-    """)
-
+    Create a quiz containing {num} questions related to the provided context.
+    Questions must be in multiple choice questions format.
+    <context>
+    {context}
+    <context>""")
     llm = ChatGroq(groq_api_key=groq_api_key, model_name="Llama3-8b-8192")
     retriever = vectors.as_retriever()
     quiz_chain = create_stuff_documents_chain(llm, prompt)
@@ -193,44 +172,23 @@ def generate_quiz():
     quiz_response = quiz_retrieval_chain.invoke({'input': "Generate Quiz", 'num': num_questions})
     quiz_text = quiz_response['answer']
     
-    # Log the raw response to check what the LLM is generating
-    logging.info("LLM Raw Quiz Response: %s", quiz_text)
-    
     # Process quiz to structured format
     quiz = []
-    
-    # Split questions based on the format "Q[question number]."
-    questions = quiz_text.split('\nQ')  # 'Q' starts each question
-    if not questions[0].startswith('Q'):
-        questions[0] = 'Q' + questions[0]  # Re-add the 'Q' if the first question is missing it
+    questions = quiz_text.split("\n\n")  # Assuming each question is separated by double new lines
 
     for question in questions:
-        lines = question.split('\n')
-        q_text = lines[0].strip()
-        options = lines[1:]  # Remaining lines are options
-        
-        correct_answer = None
-        processed_options = []
+        if '?' in question:
+            q_text = question.split('?')[0] + '?'
+            options = question.split('\n')[1:]
+            correct_answer_index = random.randint(0, len(options) - 1)
+            correct_answer = options[correct_answer_index]  # Randomly choose one of the options as the correct answer
 
-        # Process each option
-        for option in options:
-            # Check if "(Correct)" is in the option and clean the text
-            if "(Correct)" in option:
-                correct_answer = option.replace("(Correct)", "").strip()
-            processed_options.append(option.replace("(Correct)", "").strip())
-
-        # Ensure the correct answer was identified
-        if correct_answer:
             quiz.append({
                 "question": q_text,
-                "options": processed_options,  # Keep options in the original order
-                "answer": correct_answer  # Use the correct answer marked by the LLM
+                "options": options,  # Keep options in the original order
+                "answer": correct_answer  # Use the randomly selected option as the correct answer
             })
-        else:
-            # Log the issue for debugging
-            logging.error("Failed to mark correct answer for question: %s", q_text)
-            return jsonify({"error": "Quiz generation failed to mark correct answer.", "llm_response": quiz_text}), 500
-    
+            
     return jsonify({"quiz": quiz})
 
 
