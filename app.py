@@ -17,27 +17,16 @@ import shutil
 from dotenv import load_dotenv
 import google.generativeai as genai
 import uuid
-import logging
-from datetime import timedelta
-from flask_session import Session
-import redis
+
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}}, methods=["GET", "POST", "OPTIONS"], allow_headers=["Content-Type", "Authorization"],supports_credentials = True)
+CORS(app, supports_credentials = True)
 
 app.secret_key = os.getenv('FLASK_SECRET_KEY')
 groq_api_key = os.getenv('GROQ_API_KEY')
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY")
 
-app.config['SESSION_TYPE'] = 'redis'
-app.config['SESSION_PERMANENT'] = False
-app.config['SESSION_USE_SIGNER'] = True
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
-app.config['SESSION_REDIS'] = redis.StrictRedis(host='redis-server', port=6379)
-Session(app)
-logging.basicConfig(level=logging.DEBUG)
-vector_cache = {}
 
 @app.route("/", methods=["GET"])
 def home():
@@ -92,49 +81,43 @@ def vector_embedding(uploaded_pdf=None, document_text=None):
 
 
 # Document QA
-@app.route("/document_qa/", methods=["POST", "GET", "OPTIONS"])
+@app.route("/document_qa/", methods=["POST", "GET"])
 def document_qa():
-    if request.method == "OPTIONS":
-        # Handle the preflight CORS request
-        return jsonify({'status': 'OK'}), 200
-        
     if request.method == "POST":
-        logging.debug("POST request received")
-        logging.debug(f"Session data: {session}")
         if 'uploaded_file' in request.files:
             uploaded_file = request.files['uploaded_file']
+            prompt1 = request.form.get('prompt1')
             vectors, final_documents, doc_lang = vector_embedding(uploaded_pdf=uploaded_file)
-            
-            # Store the vectors in the cache with a unique ID
-            cache_id = str(uuid.uuid4())  # Generate a unique ID for the file
-            vector_cache[cache_id] = vectors
-            session['cache_id'] = cache_id  # Store the cache ID in the session
-            session['stored_doc_lang'] = doc_lang
 
-            return jsonify({"message": "File uploaded and vectors prepared successfully."})
+            question_lang = detect(prompt1)
+            if doc_lang == "hi" and question_lang == "hi":
+                selected_prompt = prompt_hindi
+            else:
+                selected_prompt = prompt_english
+
+            llm = ChatGroq(groq_api_key=groq_api_key, model_name="Llama3-8b-8192")
+            document_chain = create_stuff_documents_chain(llm, selected_prompt)
+            retriever = vectors.as_retriever()
+            retrieval_chain = create_retrieval_chain(retriever, document_chain)
+
+            start = time.process_time()
+            response = retrieval_chain.invoke({'input': prompt1})
+            response_time = time.process_time() - start
+
+            return jsonify({
+                "response_time": response_time,
+                "answer": response['answer']
+            })
 
         return jsonify({"error": "No file uploaded"})
 
-    elif request.method == "GET":
-        logging.debug("GET request received")
-        logging.debug(f"Session data: {session}")
-        if 'cache_id' not in session or 'stored_doc_lang' not in session:
-            return jsonify({"error": "File not uploaded or vectors not prepared."})
+    if request.method == "GET":
+        uploaded_file = request.files['uploaded_file']
+        prompt1 = request.form.get('prompt1')
 
-        cache_id = session['cache_id']
-        vectors = vector_cache.get(cache_id)  # Retrieve vectors from the cache
-        
-        if not vectors:
-            return jsonify({"error": "Vectors not found."})
-
-        doc_lang = session['stored_doc_lang']
-        prompt1 = request.args.get('prompt1')
-        
-        if not prompt1:
-            return jsonify({"error": "No prompt provided in the query."})
+        vectors, final_documents, doc_lang = vector_embedding(uploaded_pdf=uploaded_file)
 
         question_lang = detect(prompt1)
-
         if doc_lang == "hi" and question_lang == "hi":
             selected_prompt = prompt_hindi
         else:
