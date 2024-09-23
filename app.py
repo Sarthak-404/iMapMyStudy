@@ -1,5 +1,6 @@
 import random
 from flask import Flask, request, jsonify, send_file, session
+from flask_session import Session
 from flask_cors import CORS
 from langdetect import detect
 from langchain_groq import ChatGroq
