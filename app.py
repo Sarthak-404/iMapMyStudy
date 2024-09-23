@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 import uuid
 import logging
+from datetime import timedelta
 from flask_session import Session
 import redis
 load_dotenv()
