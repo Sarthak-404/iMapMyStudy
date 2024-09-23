@@ -21,7 +21,7 @@ import logging
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}}, methods=["GET", "POST", "OPTIONS"], allow_headers=["Content-Type", "Authorization"])
+CORS(app, resources={r"/*": {"origins": "*"}}, methods=["GET", "POST", "OPTIONS"], allow_headers=["Content-Type", "Authorization"],supports_credentials = True)
 
 app.secret_key = os.getenv('FLASK_SECRET_KEY')
 groq_api_key = os.getenv('GROQ_API_KEY')
