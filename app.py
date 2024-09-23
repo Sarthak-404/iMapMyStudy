@@ -13,6 +13,7 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 import os
 import time
+import json
 import io
 import shutil
 from dotenv import load_dotenv
