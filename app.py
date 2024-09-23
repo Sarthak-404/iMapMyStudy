@@ -18,6 +18,8 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 import uuid
 import logging
+from flask_session import Session
+import redis
 load_dotenv()
 
 app = Flask(__name__)
@@ -27,6 +29,13 @@ app.secret_key = os.getenv('FLASK_SECRET_KEY')
 groq_api_key = os.getenv('GROQ_API_KEY')
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY")
 
+app.config['SESSION_TYPE'] = 'redis'
+app.config['SESSION_PERMANENT'] = False
+app.config['SESSION_USE_SIGNER'] = True
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
+app.config['SESSION_REDIS'] = redis.StrictRedis(host='redis-server', port=6379)
+Session(app)
+logging.basicConfig(level=logging.DEBUG)
 vector_cache = {}
 
 @app.route("/", methods=["GET"])
@@ -89,6 +98,8 @@ def document_qa():
         return jsonify({'status': 'OK'}), 200
         
     if request.method == "POST":
+        logging.debug("POST request received")
+        logging.debug(f"Session data: {session}")
         if 'uploaded_file' in request.files:
             uploaded_file = request.files['uploaded_file']
             vectors, final_documents, doc_lang = vector_embedding(uploaded_pdf=uploaded_file)
@@ -104,6 +115,8 @@ def document_qa():
         return jsonify({"error": "No file uploaded"})
 
     elif request.method == "GET":
+        logging.debug("GET request received")
+        logging.debug(f"Session data: {session}")
         if 'cache_id' not in session or 'stored_doc_lang' not in session:
             return jsonify({"error": "File not uploaded or vectors not prepared."})
 

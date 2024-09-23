@@ -22,3 +22,5 @@ google.generativeai
 flask-cors
 uuid
 logging 
+redis
+flask-session
