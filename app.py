@@ -1,6 +1,5 @@
 import random
 from flask import Flask, request, jsonify, send_file, session
-from flask_session import Session
 from flask_cors import CORS
 from langdetect import detect
 from langchain_groq import ChatGroq
@@ -13,30 +12,22 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 import os
 import time
-import json
 import io
 import shutil
 from dotenv import load_dotenv
 import google.generativeai as genai
 import uuid
 import logging
-from redis import Redis
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}}, methods=["GET", "POST", "OPTIONS"], allow_headers=["Content-Type", "Authorization"], support_credentials = True)
+CORS(app, resources={r"/*": {"origins": "*"}}, methods=["GET", "POST", "OPTIONS"], allow_headers=["Content-Type", "Authorization"])
 
 app.secret_key = os.getenv('FLASK_SECRET_KEY')
 groq_api_key = os.getenv('GROQ_API_KEY')
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY")
 
-# Redis configuration for sessions and caching
-app.config['SESSION_TYPE'] = 'redis'
-app.config['SESSION_PERMANENT'] = False
-app.config['SESSION_USE_SIGNER'] = True
-app.config['SESSION_REDIS'] = Redis(host='localhost', port=6379)  # Ensure Redis is running
-Session(app)
-redis_cache = Redis(host='localhost', port=6379, db=0)
+vector_cache = {}
 
 @app.route("/", methods=["GET"])
 def home():
@@ -94,69 +85,56 @@ def vector_embedding(uploaded_pdf=None, document_text=None):
 @app.route("/document_qa/", methods=["POST", "GET", "OPTIONS"])
 def document_qa():
     if request.method == "OPTIONS":
-        # Handle preflight CORS request
+        # Handle the preflight CORS request
         return jsonify({'status': 'OK'}), 200
-
+        
     if request.method == "POST":
         if 'uploaded_file' in request.files:
             uploaded_file = request.files['uploaded_file']
-            
-            # Assume vector_embedding function returns vectors, final documents, and document language
             vectors, final_documents, doc_lang = vector_embedding(uploaded_pdf=uploaded_file)
+            
+            # Store the vectors in the cache with a unique ID
+            cache_id = str(uuid.uuid4())  # Generate a unique ID for the file
+            vector_cache[cache_id] = vectors
+            session['cache_id'] = cache_id  # Store the cache ID in the session
+            session['stored_doc_lang'] = doc_lang
 
-            # Generate a unique cache ID and store vectors and doc_lang in Redis
-            cache_id = str(uuid.uuid4())
-            redis_cache.set(cache_id, json.dumps({"vectors": vectors, "doc_lang": doc_lang}))
-
-            # Store cache ID in session
-            session['cache_id'] = cache_id
-
-            return jsonify({"message": "File uploaded and vectors prepared successfully.", "cache_id": cache_id})
+            return jsonify({"message": "File uploaded and vectors prepared successfully."})
 
         return jsonify({"error": "No file uploaded"})
 
     elif request.method == "GET":
-        # Retrieve cache ID from session or request arguments
-        cache_id = session.get('cache_id')
-        if not cache_id:
+        if 'cache_id' not in session or 'stored_doc_lang' not in session:
             return jsonify({"error": "File not uploaded or vectors not prepared."})
 
-        # Retrieve cached data from Redis using cache_id
-        cached_data = redis_cache.get(cache_id)
-        if not cached_data:
+        cache_id = session['cache_id']
+        vectors = vector_cache.get(cache_id)  # Retrieve vectors from the cache
+        
+        if not vectors:
             return jsonify({"error": "Vectors not found."})
 
-        # Parse cached data (vectors and doc_lang)
-        cached_data = json.loads(cached_data)
-        vectors = cached_data["vectors"]
-        doc_lang = cached_data["doc_lang"]
-
-        # Get the user's question (prompt1) from the query string
+        doc_lang = session['stored_doc_lang']
         prompt1 = request.args.get('prompt1')
+        
         if not prompt1:
             return jsonify({"error": "No prompt provided in the query."})
 
-        # Detect the language of the question
         question_lang = detect(prompt1)
 
-        # Select appropriate prompt based on document and question language
         if doc_lang == "hi" and question_lang == "hi":
             selected_prompt = prompt_hindi
         else:
             selected_prompt = prompt_english
 
-        # Use Groq for document chain and retrieval chain
         llm = ChatGroq(groq_api_key=groq_api_key, model_name="Llama3-8b-8192")
         document_chain = create_stuff_documents_chain(llm, selected_prompt)
         retriever = vectors.as_retriever()
         retrieval_chain = create_retrieval_chain(retriever, document_chain)
 
-        # Time the retrieval process
         start = time.process_time()
         response = retrieval_chain.invoke({'input': prompt1})
         response_time = time.process_time() - start
 
-        # Return the answer and response time
         return jsonify({
             "response_time": response_time,
             "answer": response['answer']
