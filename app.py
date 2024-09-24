@@ -142,6 +142,7 @@ def document_qa():
 
 
 # Quiz generator 
+# Quiz generator 
 @app.route('/generate_quiz', methods=['POST'])
 def generate_quiz():
     if 'file' not in request.files:
@@ -160,38 +161,57 @@ def generate_quiz():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     
+    # Modify the prompt to explicitly ask for correct answers
     prompt = ChatPromptTemplate.from_template("""
-    Create a quiz containing {num} questions related to the provided context.
-    Questions must be in multiple choice questions format.
+    Create a quiz containing {num} multiple choice questions based on the provided context.
+    Each question should have 4 options, and one of the options should be explicitly marked as the correct answer.
+    Provide the questions in the following format:
+    
+    Question 1: [question]
+    Options:
+    a) [option 1]
+    b) [option 2]
+    c) [option 3]
+    d) [option 4]
+    Answer: [correct option]
+    
     <context>
     {context}
     <context>""")
+    
     llm = ChatGroq(groq_api_key=groq_api_key, model_name="Llama3-8b-8192")
     retriever = vectors.as_retriever()
     quiz_chain = create_stuff_documents_chain(llm, prompt)
     quiz_retrieval_chain = create_retrieval_chain(retriever, quiz_chain)
+    
     quiz_response = quiz_retrieval_chain.invoke({'input': "Generate Quiz", 'num': num_questions})
     quiz_text = quiz_response['answer']
     
     # Process quiz to structured format
     quiz = []
     questions = quiz_text.split("\n\n")  # Assuming each question is separated by double new lines
-
+    
     for question in questions:
-        if '?' in question:
-            q_text = question.split('?')[0] + '?'
-            options = question.split('\n')[1:]
-            correct_answer_index = random.randint(0, len(options) - 1)
-            correct_answer = options[correct_answer_index]  # Randomly choose one of the options as the correct answer
-
+        if 'Question' in question and 'Answer:' in question:
+            # Extract question text, options, and correct answer
+            q_text = question.split("Options:")[0].strip()
+            options = [opt.strip() for opt in question.split("Options:")[1].split("\n") if opt.strip()]
+            
+            # Extract the correct answer
+            correct_answer_line = [line for line in question.split("\n") if 'Answer:' in line]
+            if correct_answer_line:
+                correct_answer = correct_answer_line[0].split('Answer:')[-1].strip()
+            
+            # Remove any option that starts with "Answer" from the options list
+            options = [opt for opt in options if not opt.startswith("Answer")]
+            
             quiz.append({
                 "question": q_text,
-                "options": options,  # Keep options in the original order
-                "answer": correct_answer  # Use the randomly selected option as the correct answer
+                "options": options,  # Filtered options without "Answer"
+                "answer": correct_answer  # Use the correct answer from the LLM
             })
             
     return jsonify({"quiz": quiz})
-
 
 
 # Submit the quiz
