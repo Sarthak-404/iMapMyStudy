@@ -10,6 +10,10 @@ from langchain.chains import create_retrieval_chain
 from langchain_community.vectorstores import FAISS
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 import os
 import time
 import io
@@ -459,77 +463,106 @@ def gemini_llm_chat():
 
 
 # Youtube Summarizer
-@app.route("/youtube_summarizer/", methods=["POST", "GET"])
+@app.route("/youtube_summarizer/", methods=["POST"])
 def youtube_summarizer():
-    from youtube_transcript_api import YouTubeTranscriptApi
-    
     if request.method == "POST":
-        youtube_link = request.form.get('youtube_link')
-        language = request.form.get('language')
+        
+        summarize = ChatPromptTemplate.from_template('''
+                        Summarize the content given.
+                        Content: {input}
+                    ''')
+        def open_url_in_chrome(url, mode='headed'):
+            options = webdriver.ChromeOptions()
 
-        genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+            if mode == 'headless':
+                options.add_argument('--headless')
 
-        prompt = """You are a YouTube video summarizer. You will be taking the transcript text
-        and summarizing the entire video and providing the important summary in points
-        within 250 words. Please provide the summary of the text given here:  """
-
-        language_code = {"English": "en", "Hindi": "hi", "Japanese": "ja"}[language]
-
-        def extract_transcript_details(youtube_video_url, language_code):
+            driver = webdriver.Chrome(options=options)
+            driver.get(url)
+            return driver
+        
+        def scroll_into_view_and_click(driver, element):
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
+            element.click()
+        
+        def expand_description(driver):
             try:
-                video_id = youtube_video_url.split("=")[1]
-                transcript_text = YouTubeTranscriptApi.get_transcript(video_id, languages=[language_code])
-                transcript = " ".join([i["text"] for i in transcript_text])
+                # Locate the "More" button and scroll into view before clicking
+                more_button = WebDriverWait(driver, 10).until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, "tp-yt-paper-button#expand"))
+                )
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", more_button)
+                more_button.click()
+                print("Expanded video description.")
+            except Exception as e:
+                print(f"Failed to expand video description: {e}")
+
+        def show_transcript(driver):
+            try:
+                # Locate the "Show transcript" button using its aria-label
+                show_transcript_button = WebDriverWait(driver, 20).until(
+                    EC.element_to_be_clickable((By.XPATH, "//button[@aria-label='Show transcript']"))
+                )
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", show_transcript_button)
+                show_transcript_button.click()
+                print("Clicked 'Show transcript' button.")
+            except Exception as e:
+                print(f"Failed to click 'Show transcript': {e}")
+
+        def get_transcript(driver):
+            try:
+                # Wait for the transcript section to be visible
+                transcript_element = WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, "//ytd-transcript-segment-list-renderer"))
+                )
+                transcript = transcript_element.text
                 return transcript
             except Exception as e:
-                return f"Error retrieving transcript: {str(e)}"
+                print(f"Failed to retrieve transcript: {e}")
+                return ""
 
-        def generate_gemini_content(transcript_text, prompt):
-            model = genai.GenerativeModel("gemini-pro")
-            response = model.generate_content(prompt + transcript_text)
-            return response.text
-        
-        
+        def transcript_text_only(transcript):
+            # Remove timestamps and only return the text
+            transcript_lines = transcript.split('\n')
+            text_lines = transcript_lines[1::2]  # Extract only the text lines, skipping timestamps
+            return " ".join(text_lines)
 
-        transcript_text = extract_transcript_details(youtube_link, language_code)
-        if "Error" in transcript_text:
-            return jsonify({"error": transcript_text})
+        def summarizer(transcript):
+            # Use LLM to generate a summary of the transcript
+            main = summarize.invoke({'input': transcript})
+            response = llm.invoke(main)
+            return response.content
 
-        summary = generate_gemini_content(transcript_text, prompt)
-        return jsonify({"summary": summary})
+        url = request.form.get('youtube_link')
+        mode = 'headed'
+        llm = ChatGroq(groq_api_key=groq_api_key, model_name="Llama3-8b-8192")
+        # Open YouTube video in Chrome
+        driver = open_url_in_chrome(url, mode)
 
-    if request.method == "GET":
-        youtube_link = request.form.get('youtube_link')
-        language = request.form.get('language')
+        # Expand description
+        expand_description(driver)
 
-        genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+        # Show transcript
+        show_transcript(driver)
 
-        prompt = """You are a YouTube video summarizer. You will be taking the transcript text
-        and summarizing the entire video and providing the important summary in points
-        within 250 words. Please provide the summary of the text given here:  """
+        # Get the transcript
+        transcript = get_transcript(driver)
 
-        language_code = {"English": "en", "Hindi": "hi", "Japanese": "ja"}[language]
+        # Close the browser
+        driver.quit()
 
-        def extract_transcript_details(youtube_video_url, language_code):
-            try:
-                video_id = youtube_video_url.split("=")[1]
-                transcript_text = YouTubeTranscriptApi.get_transcript(video_id, languages=[language_code])
-                transcript = " ".join([i["text"] for i in transcript_text])
-                return transcript
-            except Exception as e:
-                return f"Error retrieving transcript: {str(e)}"
+        # If transcript was successfully retrieved
+        if transcript:
+            text_only = transcript_text_only(transcript)
 
-        def generate_gemini_content(transcript_text, prompt):
-            model = genai.GenerativeModel("gemini-pro")
-            response = model.generate_content(prompt + transcript_text)
-            return response.text
+            summary = summarizer(text_only)
+            return jsonify({"Summary": str(summary)})
+        else:
+            return "Transcript unavailable"
 
-        transcript_text = extract_transcript_details(youtube_link, language_code)
-        if "Error" in transcript_text:
-            return jsonify({"error": transcript_text})
 
-        summary = generate_gemini_content(transcript_text, prompt)
-        return jsonify({"summary": summary})
+
+
 
 if __name__ == "__main__":
     app.run(debug=True)
