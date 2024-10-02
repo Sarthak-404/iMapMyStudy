@@ -5,7 +5,6 @@ langchain
 langchain_google_genai
 python-dotenv
 google-api-python-client
-youtube-transcript-api
 python-multipart
 Gunicorn
 faiss-cpu
@@ -23,3 +22,4 @@ flask-cors
 uuid
 selenium
 webdriver-manager
+bs4
