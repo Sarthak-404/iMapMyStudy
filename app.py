@@ -8,13 +8,15 @@ from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
 from langchain.chains import create_retrieval_chain
 from langchain_community.vectorstores import FAISS
-from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import PyPDFLoader, WebBaseLoader
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.service import Service
 import os
+import bs4
 import time
 import io
 import shutil
@@ -85,62 +87,67 @@ def vector_embedding(uploaded_pdf=None, document_text=None):
 
 
 # Document QA
-@app.route("/document_qa/", methods=["POST", "GET"])
+@app.route("/document_qa/", methods=["POST"])
 def document_qa():
-    if request.method == "POST":
-        if 'uploaded_file' in request.files:
-            uploaded_file = request.files['uploaded_file']
-            prompt1 = request.form.get('prompt1')
-            vectors, final_documents, doc_lang = vector_embedding(uploaded_pdf=uploaded_file)
-
-            question_lang = detect(prompt1)
-            if doc_lang == "hi" and question_lang == "hi":
-                selected_prompt = prompt_hindi
-            else:
-                selected_prompt = prompt_english
-
-            llm = ChatGroq(groq_api_key=groq_api_key, model_name="Llama3-8b-8192")
-            document_chain = create_stuff_documents_chain(llm, selected_prompt)
-            retriever = vectors.as_retriever()
-            retrieval_chain = create_retrieval_chain(retriever, document_chain)
-
-            start = time.process_time()
-            response = retrieval_chain.invoke({'input': prompt1})
-            response_time = time.process_time() - start
-
-            return jsonify({
-                "response_time": response_time,
-                "answer": response['answer']
-            })
-
-        return jsonify({"error": "No file uploaded"})
-
-    if request.method == "GET":
+        print(request.files)  
+        print(request.form)   
+        if 'uploaded_file' not in request.files:
+            return jsonify({"error": "No file uploaded"})
         uploaded_file = request.files['uploaded_file']
         prompt1 = request.form.get('prompt1')
-
         vectors, final_documents, doc_lang = vector_embedding(uploaded_pdf=uploaded_file)
-
         question_lang = detect(prompt1)
         if doc_lang == "hi" and question_lang == "hi":
             selected_prompt = prompt_hindi
         else:
             selected_prompt = prompt_english
-
         llm = ChatGroq(groq_api_key=groq_api_key, model_name="Llama3-8b-8192")
         document_chain = create_stuff_documents_chain(llm, selected_prompt)
         retriever = vectors.as_retriever()
         retrieval_chain = create_retrieval_chain(retriever, document_chain)
-
         start = time.process_time()
         response = retrieval_chain.invoke({'input': prompt1})
         response_time = time.process_time() - start
-
         return jsonify({
             "response_time": response_time,
             "answer": response['answer']
         })
 
+        
+
+
+
+# Link Summarizer
+@app.route('/web_summarizer', methods=['POST'])
+def web_summarizer():
+    input_text = request.form.get('input')
+    if not input_text :
+        return jsonify({"error": "Please enter a valid URL"}), 400
+    
+    try:
+        url = input_text 
+        loader = WebBaseLoader(url)
+        docs = loader.load()
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        final_documents = text_splitter.split_documents(docs)
+        vectors = FAISS.from_documents(final_documents, embeddings)
+        prompt = ChatPromptTemplate.from_template('''
+                Your job is to summarize the given context.
+                Give a proper summary including all main points, topics and description.
+                Summary must include all the details of the context and suggest some further ons.
+                {context}
+        ''')
+        llm = ChatGroq(groq_api_key=groq_api_key, model_name="Llama3-8b-8192")
+        document_chain = create_stuff_documents_chain(llm, prompt)
+        retriever = vectors.as_retriever()
+        retrieval_chain = create_retrieval_chain(retriever, document_chain)
+        response = retrieval_chain.invoke({'input': 'Generate Summary'})
+
+        return jsonify({"summary": response['answer']}), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 
@@ -463,106 +470,128 @@ def gemini_llm_chat():
 
 
 # Youtube Summarizer
-@app.route("/youtube_summarizer/", methods=["POST"])
-def youtube_summarizer():
-    if request.method == "POST":
+# @app.route("/youtube_summarizer/", methods=["POST"])
+# def youtube_summarizer():
+#     if request.method == "POST":
         
-        summarize = ChatPromptTemplate.from_template('''
-                        Summarize the content given.
-                        Content: {input}
-                    ''')
-        def open_url_in_chrome(url, mode='headed'):
-            options = webdriver.ChromeOptions()
+#         summarize = ChatPromptTemplate.from_template('''
+#                         Summarize the content given.
+#                         Content: {input}
+#                     ''')
+#         def open_url_in_chrome(url, mode='headed'):
+#             try:
+#                 options = webdriver.ChromeOptions()
 
-            if mode == 'headless':
-                options.add_argument('--headless')
+#                 if mode == 'headless':
+#                     options.add_argument('--headless')
+#                     options.add_argument('--no-sandbox')
+#                     options.add_argument('--disable-dev-shm-usage')
+#                     options.add_argument('--disable-gpu')  
+#                     options.add_argument('--remote-debugging-port=9222')
 
-            driver = webdriver.Chrome(options=options)
-            driver.get(url)
-            return driver
+#                 driver = webdriver.Chrome(options=options)
+#                 driver.get(url)
+#                 return driver
+#             except Exception as e:
+#                 print(f"Failed to open chrome: {e}")
+#                 return ""
         
-        def scroll_into_view_and_click(driver, element):
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
-            element.click()
+#         def scroll_into_view_and_click(driver, element):
+#             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
+#             element.click()
         
-        def expand_description(driver):
-            try:
-                # Locate the "More" button and scroll into view before clicking
-                more_button = WebDriverWait(driver, 10).until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, "tp-yt-paper-button#expand"))
-                )
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", more_button)
-                more_button.click()
-                print("Expanded video description.")
-            except Exception as e:
-                print(f"Failed to expand video description: {e}")
+#         def expand_description(driver):
+#             try:
+#                 # page_html = driver.page_source
+#                 # with open("index.html", "w", encoding="utf-8") as f:
+#                 #     f.write(page_html)
+#                 # print("Saved page HTML to index.html.")
+#                 # Locate the "More" button and scroll into view before clicking
+#                 more_button = WebDriverWait(driver, 10).until(
+#                     EC.element_to_be_clickable((By.XPATH, "//yt-formatted-string[text()='more']"))
+#                 )
+#                 driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", more_button)
+#                 more_button.click()
+#                 print("Expanded video description.")
+#             except Exception as e:
+#                 print(f"Failed to expand video description: {e}")
 
-        def show_transcript(driver):
-            try:
-                # Locate the "Show transcript" button using its aria-label
-                show_transcript_button = WebDriverWait(driver, 20).until(
-                    EC.element_to_be_clickable((By.XPATH, "//button[@aria-label='Show transcript']"))
-                )
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", show_transcript_button)
-                show_transcript_button.click()
-                print("Clicked 'Show transcript' button.")
-            except Exception as e:
-                print(f"Failed to click 'Show transcript': {e}")
+#         def show_transcript(driver):
+#             try:
+#                 # Locate the "Show transcript" button using its aria-label
+#                 show_transcript_button = WebDriverWait(driver, 20).until(
+#                     EC.element_to_be_clickable((By.XPATH, "//button[@aria-label='Show transcript']"))
+#                 )
+#                 driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", show_transcript_button)
+#                 show_transcript_button.click()
+#                 print("Clicked 'Show transcript' button.")
+#             except Exception as e:
+#                 print(f"Failed to click 'Show transcript': {e}")
 
-        def get_transcript(driver):
-            try:
-                # Wait for the transcript section to be visible
-                transcript_element = WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.XPATH, "//ytd-transcript-segment-list-renderer"))
-                )
-                transcript = transcript_element.text
-                return transcript
-            except Exception as e:
-                print(f"Failed to retrieve transcript: {e}")
-                return ""
+#         def get_transcript(driver):
+#             try:
+#                 # Wait for the transcript section to be visible
+#                 transcript_element = WebDriverWait(driver, 10).until(
+#                     EC.presence_of_element_located((By.XPATH, "//ytd-transcript-segment-list-renderer"))
+#                 )
+#                 transcript = transcript_element.text
+#                 return transcript
+#             except Exception as e:
+#                 print(f"Failed to retrieve transcript: {e}")
+#                 return ""
 
-        def transcript_text_only(transcript):
-            # Remove timestamps and only return the text
-            transcript_lines = transcript.split('\n')
-            text_lines = transcript_lines[1::2]  # Extract only the text lines, skipping timestamps
-            return " ".join(text_lines)
+#         def transcript_text_only(transcript):
+#             # Remove timestamps and only return the text
+#             transcript_lines = transcript.split('\n')
+#             text_lines = transcript_lines[1::2]  # Extract only the text lines, skipping timestamps
+#             return " ".join(text_lines)
 
-        def summarizer(transcript):
-            # Use LLM to generate a summary of the transcript
-            main = summarize.invoke({'input': transcript})
-            response = llm.invoke(main)
-            return response.content
+#         def summarizer(transcript):
+#             # Use LLM to generate a summary of the transcript
+#             main = summarize.invoke({'input': transcript})
+#             response = llm.invoke(main)
+#             return response.content
 
-        url = request.form.get('youtube_link')
-        mode = 'headed'
-        llm = ChatGroq(groq_api_key=groq_api_key, model_name="Llama3-8b-8192")
-        # Open YouTube video in Chrome
-        driver = open_url_in_chrome(url, mode)
+#         url = request.form.get('youtube_link')
+#         mode = 'headed'
+#         llm = ChatGroq(groq_api_key=groq_api_key, model_name="Llama3-8b-8192")
+#         # Open YouTube video in Chrome
+#         try:
+#             driver = open_url_in_chrome(url, mode)
 
-        # Expand description
-        expand_description(driver)
+#             # Expand description
+#             expand_description(driver)
 
-        # Show transcript
-        show_transcript(driver)
+#             # Show transcript
+#             show_transcript(driver)
 
-        # Get the transcript
-        transcript = get_transcript(driver)
+#             # Get the transcript
+#             transcript = get_transcript(driver)
 
-        # Close the browser
-        driver.quit()
+#             # Close the browser
+#             driver.quit()
 
-        # If transcript was successfully retrieved
-        if transcript:
-            text_only = transcript_text_only(transcript)
+#             # If transcript was successfully retrieved
+#             if transcript:
+#                 text_only = transcript_text_only(transcript)
 
-            summary = summarizer(text_only)
-            return jsonify({"Summary": str(summary)})
-        else:
-            return "Transcript unavailable"
-
-
-
+#                 summary = summarizer(text_only)
+#                 return jsonify({"Summary": str(summary)})
+#             # else:
+#             #     return "Transcript unavailable"
+#         except Exception as e:
+#             print(f"Error occurred: {str(e)}")
+#             return jsonify({"error": str(e)})
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=8000)
+
+# in tmux
+# source venv/bin/activate
+# tmux ls (to check how many servers are running)
+
+# to access aws vs code 
+# press ctr + shift + p 
+# click on the instance 
+# enter to the directory iMapMyStudy
