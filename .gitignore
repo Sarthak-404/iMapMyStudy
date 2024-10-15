@@ -1,5 +1,6 @@
 .env
 AWS.py
 Complete.py
-study.pem
+*.pem
 loading.ipynb
+nginx_tutorial.txt
