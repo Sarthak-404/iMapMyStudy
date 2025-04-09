@@ -116,4 +116,4 @@ Welcome to **iMapMyStudy**, your one-stop solution for personalized and intellig
 
 ## 👥 Authors
 
-Built with by Sarthak Sachan
+Built by Sarthak Sachan
